@@ -3,3 +3,4 @@ data.json
 bin/
 coverage.out
 docker
+mail2most
