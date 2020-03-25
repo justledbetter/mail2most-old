@@ -20,7 +20,10 @@ import (
 	gomail "github.com/emersion/go-message/mail"
 )
 
+//var seenAttachments map[[32]byte]string
+
 func init() {
+	seenAttachments = make(map[[32]byte]string)
 	// additional charsets are defined in charsets.go
 	for name, chst := range charsets {
 		charset.RegisterEncoding(name, chst)
@@ -166,7 +169,7 @@ func (m Mail2Most) read(r io.Reader) (*gomail.Reader, error) {
 		m.Debug("Charset Error", map[string]interface{}{"Error": err, "status": "trying to convert"})
 		charSetError = true
 	} else if err != nil {
-		m.Error("Read Error", map[string]interface{}{"Error": err})
+		m.Error("Read Error in internals", map[string]interface{}{"Error": err})
 		if err != nil {
 			return nil, err
 		}
@@ -193,11 +196,14 @@ func (m Mail2Most) read(r io.Reader) (*gomail.Reader, error) {
 
 // processReader processes a mail.Reader and returns the body and a list of attachment filename paths or an error
 func (m Mail2Most) processReader(mr *gomail.Reader, profile int) (string, []Attachment, error) {
+
 	if mr == nil {
 		return "", []Attachment{}, fmt.Errorf("nil reader")
 	}
 	var (
 		body        string
+		html        string
+                text        string
 		attachments []Attachment
 	)
 	// Process each message's part
@@ -207,40 +213,109 @@ func (m Mail2Most) processReader(mr *gomail.Reader, profile int) (string, []Atta
 			break
 		} else if err != nil {
 			if err != nil {
-				return "", []Attachment{}, err
+				continue
 			}
 		}
 
+		m.Debug("InlineHeader type is", map[string]interface{}{"type": p.Header.Get("Content-Type")})
 		switch h := p.Header.(type) {
 		case *gomail.InlineHeader:
-			// This is the message's text (can be plain-text or HTML)
-			b, err := ioutil.ReadAll(p.Body)
-			if err != nil {
-				return "", []Attachment{}, err
-			}
-			_, _, err = image.Decode(strings.NewReader(string(b)))
-			// images will be ignored
-			if err != nil {
-				body += string(b)
-			}
-		case *gomail.AttachmentHeader:
-			// This is an attachment
-			if m.Config.Profiles[profile].Mattermost.MailAttachments {
-				filename, err := h.Filename()
+
+			// Parse HTML e-mails
+			//
+			if strings.HasPrefix(p.Header.Get("Content-Type"),"text/html") {
+
+				// This is the message's text (can be plain-text or HTML)
+				b, err := ioutil.ReadAll(p.Body)
 				if err != nil {
-					return "", []Attachment{}, err
+					continue
 				}
-				if filename != "" {
-					m.Debug("attachments found", map[string]interface{}{"filename": filename})
+
+//fmt.Println("HTML follows: >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+//fmt.Println(string(b))
+				b, err = m.parseHtml( b )
+				if err != nil {
+					m.Debug("parseHtml returned an error", map[string]interface{}{"error": err})
+					continue
 				}
+
+				html += string(b)
+//fmt.Println("       fixed: >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+//fmt.Println(html)
+//fmt.Println("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+
+			// Parse plaintext e-mails
+			//
+			} else if strings.HasPrefix(p.Header.Get("Content-Type"),"text/plain") {
+				if len(html) < 1 {
+					b, err := ioutil.ReadAll(p.Body)
+					if err != nil {
+						m.Debug("ioutil returned an error", map[string]interface{}{"error": err})
+						continue
+					}
+					_, _, err = image.Decode(strings.NewReader(string(b)))
+					// images will be ignored
+					if err != nil {
+						b, err = m.parseText(b)
+						text += string(b)
+					}
+				}
+
+//fmt.Println("TEXT follows:")
+//fmt.Println(text)
+//fmt.Println("--")
+
+			// Parse images
+			//
+			} else if strings.HasPrefix(p.Header.Get("Content-Type"),"image/") {
+				if m.Config.Profiles[profile].Mattermost.MailAttachments {
+
+					b, err := ioutil.ReadAll(p.Body)
+					if err != nil {
+						m.Debug("ioutil returned an error", map[string]interface{}{"error": err})
+						continue
+					}
+
+					attachment, ex := m.parseAttachment( b, p.Header.Get("Content-Type") )
+					if ex == nil {
+						attachments = append(attachments, attachment)
+					}
+					m.Debug("something else went wrong!", map[string]interface{}{"error":ex})
+				}
+
+			} else {
+				m.Debug("Don't know what to do with this InlineHeader", map[string]interface{}{"type": p.Header.Get("Content-Type")})
+			}
+
+		case *gomail.AttachmentHeader:
+                        // This is an attachment
+                        if m.Config.Profiles[profile].Mattermost.MailAttachments {
+                                filename, err := h.Filename()
+                                if err != nil {
+                                        continue
+                                }
 
 				b, err := ioutil.ReadAll(p.Body)
 				if err != nil {
-					return "", []Attachment{}, err
+					// Skip this attachment and hope things aren't boned.
+					m.Debug("ioutil returned an error", map[string]interface{}{"error": err})
+					continue
 				}
 
-				attachments = append(attachments, Attachment{Filename: filename, Content: b})
+				attachment, ex := m.parseAttachment( b, fmt.Sprintf("name=\"%s\"", filename) )
+				if ex == nil {
+					attachments = append(attachments, attachment)
+				}
+				m.Debug("something else went wrong!", map[string]interface{}{})
 			}
+		}
+
+		if len(html) > 0 {
+			body = html
+		} else if len(text) > 0 {
+			body = text
+		} else {
+			body = ""
 		}
 	}
 	return body, attachments, nil
