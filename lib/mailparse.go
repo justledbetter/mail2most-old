@@ -72,8 +72,8 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 	b = MS.ReplaceAll(b,[]byte(""))
 
 	// Try to cut out mail clients that are nice enough to tell us where the reply begins. (ProtonMail)
-	MS := regexp.MustCompile(`‐‐‐‐‐‐‐ Original Message ‐‐‐‐‐‐‐.*`)
-	b = MS.ReplaceAll(b,[]byte(""))
+	om := regexp.MustCompile(`‐‐‐‐‐‐‐ Original Message ‐‐‐‐‐‐‐.*`)
+	b = om.ReplaceAll(b,[]byte(""))
 
 	// Ignore namespaces (declutter html)
 	xs := regexp.MustCompile(` ?xmlns:?[a-z]+?="[^"]*?"`)
