@@ -117,7 +117,7 @@ func (m Mail2Most) GetMail(profile int) ([]Mail, error) {
 			continue
 		}
 
-		messages := make(chan *imap.Message, 1000)
+		messages := make(chan *imap.Message, 10000)
 		done := make(chan error, 1)
 		go func() {
 			done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope, "BODY[]", imap.FetchUid}, messages)
