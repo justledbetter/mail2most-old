@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cseeger-epages/godown"
+	"github.com/justledbetter/godown"
 	"github.com/k3a/html2text"
 	"github.com/mattermost/mattermost-server/model"
 )
