@@ -143,6 +143,22 @@ func (m Mail2Most) GetMail(profile int) ([]Mail, error) {
 				return []Mail{}, err
 			}
 
+			// Skip empty messages.
+			if len(strings.TrimSpace(body)) < 1 && len(attachments) < 1 {
+				m.Info("blank message", map[string]interface{}{
+					"subject": msg.Envelope.Subject, "uid": msg.Uid,
+				})
+				continue
+			}
+
+			// Skip mailserver error notifications.
+			if strings.HasPrefix(msg.Envelope.Subject, "Delivery Status Notification") {
+				m.Info("skipping mailserver error", map[string]interface{}{
+					"subject": msg.Envelope.Subject, "uid": msg.Uid,
+				})
+				continue
+			}
+
 			email := Mail{
 				ID:          msg.Uid,
 				From:        msg.Envelope.From,
