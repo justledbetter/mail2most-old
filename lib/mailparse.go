@@ -38,6 +38,7 @@ var seenAttachments map[[32]byte]string
 //
 func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 
+	// DEBUG CODE. Capture input message for analysis.
 	sum := sha256.Sum256(b)
 	var f *os.File
 	var e error
@@ -54,6 +55,7 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 			fmt.Println( " >>> debug thing went boom ", e);
 		}
 	}
+	// END DEBUG CODE
 
 	// Is this an error message?  Nuke it.
 	NI := regexp.MustCompile(`An error occurred while trying to deliver the mail to the following recipients:`)
@@ -61,14 +63,15 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 		return []byte{}, errors.New("Ignoring postal service error")
 	}
 
-	// Kill the beginning because we don't need it.
+	// Strip out HTML header, since we don't really need it.
 	hb := regexp.MustCompile(`(?i)<html.*/head>`)
 	b = hb.ReplaceAll(b,[]byte(""))
 
-	// I hate Microsoft.
+	// Try to cut out the rest of a reply that comes from Outlook.  :)
 	MS := regexp.MustCompile(`<div style="border-top:solid[^>]*?><p[^>]*?><strong><span[^>]*>[A-Za-z]+:.*`)
 	b = MS.ReplaceAll(b,[]byte(""))
 
+	// Ignore namespaces (declutter html)
 	xs := regexp.MustCompile(` ?xmlns:?[a-z]+?="[^"]*?"`)
 	b = xs.ReplaceAll(b,[]byte(""))
 
@@ -76,15 +79,15 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 	nl := regexp.MustCompile(`[\r\n]+`)
 	b = nl.ReplaceAll(b,[]byte(""))
 
-	// In the off chance their e-mail client does the "On X Y Z, <user@email> said:", get rid of that junk first.
+	// Attempt to remove replies beginning with "On X Y Z, <user@email> said:".
 	ow := regexp.MustCompile(`On .*? wrote:.*`)
 	b = ow.ReplaceAll(b,[]byte(""))
 
-	// Remove all <!--[MSO COMMENTS]--> and their contents
+	// Remove all <!--[MSO COMMENTS]--> and their contents. These tags come from Outlook's default mail editor.
 	MC := regexp.MustCompile(`<!--\[if.*?endif]-->`)
 	b = MC.ReplaceAll(b,[]byte(""))
 
-	// Remove all <!-- comments --> and their contents
+	// Remove all <!-- comments --> and their contents. Just in case there are any left.
 	co := regexp.MustCompile(`<!--.*?-->`)
 	b = co.ReplaceAll(b,[]byte(""))
 
@@ -106,25 +109,26 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 	m2 := regexp.MustCompile(`(?i)<meta.*?/>`)
 	b = m2.ReplaceAll(b,[]byte(""))
 
-	// Kill <div> tags and end tags (but not the contents)
+	// Remove <div> tags and end tags (but keep the contents); Simplifying HTML
 	d1 := regexp.MustCompile(`(?i)<div[^>]*?>`)
 	b = d1.ReplaceAll(b,[]byte(""))
 	d2 := regexp.MustCompile(`(?i)</div>`)
 	b = d2.ReplaceAll(b,[]byte(""))
 
-	// Remove all <o:p> tags and their contents
+	// Remove all <o:p> tags and their contents. These are Office/Outlook-specific.
 	op := regexp.MustCompile(`(?i)<o:p[^>]*>[^>]*</o:p>`)
 	b = op.ReplaceAll(b,[]byte(""))
 
-	// Remove all style attributes from every tag
+	// Remove all style attributes from every tag, Markdown doesn't need these.
 	sa := regexp.MustCompile(`(?i) ?style="[^"]*"`)
 	b = sa.ReplaceAll(b,[]byte(""))
 
-	// Remove all style attributes from every tag
+	// Remove all style attributes from every tag, Markdown doesn't need these.
 	cl := regexp.MustCompile(`(?i) ?class="[^"]*"`)
 	b = cl.ReplaceAll(b,[]byte(""))
 
-	// Remove annoying headers
+	// Remove reply headers ("Subject: xxx", "From: (300 recipient list)", etc).  I've attempted to account
+	// for the ways Outlook and iOS do this, but there may be other variations down the road.
 	sr := regexp.MustCompile(`(?i)(<blockquote[^>]*>)?<(strong|b)>[^:]*: ?</(strong|b)> ?[^<]+<br/?>`)
 	b = sr.ReplaceAll(b,[]byte(""))
 
@@ -144,31 +148,34 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 	br := regexp.MustCompile(`(<br[^>]*?>){2,}`)
 	b = br.ReplaceAll(b,[]byte("<br>"))
 
-	// Kill tables for now.
+	// The following tag will remove all tables; I don't really want to do this. Keeping this here for a future
+	// usecase where I extract the tables from the message and attach them as CSV files after-the-fact.
 //	tb := regexp.MustCompile(`<table(.*)?/table>`)
 //	b = tb.ReplaceAll(b,[]byte("<p><i>(Table removed to improve readability. Please use attachments.)</i></p>"))
 
-//	// Simplify <td> elements
+	// Simplify <td> elements, otherwise Markdown may get confused.
 	tp := regexp.MustCompile(`<td([^>]*?)><p[^>]*>(.*?)</p></td>`)
 	b = tp.ReplaceAll(b,[]byte("<td$1>$2</td>"))
 
-	// If we have 4 or more empty <p>s in a row, this is a good place to stop the message.
+	// If we have 4 or more empty <p>s in a row, this is a good place to stop the message.  Hopefully the text below
+	// that is a reply.
 	MK := regexp.MustCompile(`(?i)<p></p>{4,}.*`)
 	b = MK.ReplaceAll(b,[]byte(""))
 
-	// Remove empty <p>s
+	// Remove any empty <p>s that remain.
 	pp := regexp.MustCompile(`(?i)<p></p>`)
 	b = pp.ReplaceAll(b,[]byte(""))
 
-	// Straggling <blockquotes>
+	// Remove straggling <blockquotes>
 	sb := regexp.MustCompile(`(?i)<blockquote[^>]*>$`)
 	b = sb.ReplaceAll(b,[]byte(""))
 
-	// Finally, if we're lucky enough to have a "Sent from" footer to the reply, kill everything else.
-	// (If not, Heaven help the poor user.)
+	// Finally, if we're lucky enough to have a "Sent from" footer to the reply, kill everything else. This is
+	// typical on iOS, Samsung, and Blackberry devices. If the user has a custom signature, this won't help.
 	sf := regexp.MustCompile(`(Sent [Ff]rom|Sent via).*`)
 	b = sf.ReplaceAll(b,[]byte(""))
 
+	// DEBUG CODE. Capture resulting output for analysis.
 	if _, err := os.Stat(fmt.Sprintf("outputs/%x.out",sum)); os.IsNotExist(err) {
 		if f, e = os.Create(fmt.Sprintf("outputs/%x.out",sum)); e == nil {
 			writer := bufio.NewWriter(f)
@@ -182,6 +189,7 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 			fmt.Println( " >>> debug thing went boom ", e);
 		}
 	}
+	// END DEBUG CODE.
 
 	return b, nil
 }
@@ -190,15 +198,19 @@ func (m Mail2Most) parseHtml( b []byte ) ([]byte, error) {
 //
 func (m Mail2Most) parseText( b []byte ) ([]byte, error) {
 
+	// Attempt to strip the reply.
 	on := regexp.MustCompile(`(?s)On .*? wrote:.*$`)
 	b = on.ReplaceAll(b,[]byte(""))
 
+	// Remove forwarded-message notice.
 	fw := regexp.MustCompile(`(?i)Begin forwarded message:`)
 	b = fw.ReplaceAll(b,[]byte(""))
 
+	// Eliminate extra whitespace.
 	ws := regexp.MustCompile(`(?s)\s{2+}`)
 	b = ws.ReplaceAll(b,[]byte(" "))
 
+	// Remove reply headers.
 	re := regexp.MustCompile(`(.+): ((.|\r\n\s)+)\r\n`)
 	b = re.ReplaceAll(b,[]byte(""))
 
