@@ -96,6 +96,15 @@ func (m Mail2Most) Run() error {
 				}
 			}
 		}
+
+		// The user wishes this to be a run-once cycle (for use in serverless platforms)
+                if m.Config.General.NoLoop {
+			m.Debug("done", map[string]interface{}{
+				"noloop": true,
+			})
+			break
+		}
+
 		//time.Sleep(time.Duration(m.Config.General.TimeInterval) * 10 * time.Second)
 		m.Debug("sleeping", map[string]interface{}{
 			"intervaltime": m.Config.General.TimeInterval,
@@ -103,4 +112,6 @@ func (m Mail2Most) Run() error {
 		})
 		time.Sleep(time.Duration(m.Config.General.TimeInterval) * time.Second)
 	}
+
+	return nil
 }

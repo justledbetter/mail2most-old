@@ -15,6 +15,7 @@ type config struct {
 type general struct {
 	File         string
 	TimeInterval uint
+	NoLoop       bool
 }
 
 type logging struct {
