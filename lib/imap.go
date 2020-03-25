@@ -70,7 +70,7 @@ func (m Mail2Most) GetMail(profile int) ([]Mail, error) {
 			"folder": folder,
 		})
 
-		limit := m.Config.Profiles[profile].Mail.Limit - 1
+		limit := (m.Config.Profiles[profile].Mail.Limit + 1) - 1
 		seqset := new(imap.SeqSet)
 		if m.Config.Profiles[profile].Filter.Unseen {
 			m.Debug("searching unseen", map[string]interface{}{"unseen": m.Config.Profiles[profile].Filter.Unseen})
@@ -84,6 +84,12 @@ func (m Mail2Most) GetMail(profile int) ([]Mail, error) {
 			if err != nil {
 				return []Mail{}, err
 			}
+
+			// Avoid bucket overflows on ids[0:limit]
+			if limit > uint32(len(ids)) {
+				limit = uint32(len(ids))
+			}
+
 			if limit > 0 {
 				m.Info("unseen mails limit found", map[string]interface{}{"ids": ids[0:limit], "limit": limit + 1})
 				seqset.AddNum(ids[0:limit]...)
@@ -123,7 +129,7 @@ func (m Mail2Most) GetMail(profile int) ([]Mail, error) {
 
 			mr, err := m.read(r)
 			if err != nil {
-				m.Error("Read Error", map[string]interface{}{"Error": err})
+				m.Error("Read Error in imap", map[string]interface{}{"Error": err})
 				return []Mail{}, err
 			}
 
